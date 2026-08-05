@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant User
+    participant App as Excel/Word
+    participant UIA as UI Automation
+    participant UES as UiaEventService
+    participant Reader as ProgramReader
+    participant UEL as UiaElementService
+    participant TTS as TextToSpeech
+
+    User->>App: Navigate to cell B5
+    App->>UIA: Fire FocusChangedEvent
+    UIA->>UES: OnFocusChanged(element)
+    UES->>UES: Check if element changed
+    UES->>Reader: Invoke OnFocusChanged()
+    Reader->>Reader: AnnounceCurrentElement()
+    Reader->>UEL: GetName(element)
+    UEL-->>Reader: "B5"
+    Reader->>UEL: GetControlType(element)
+    UEL-->>Reader: "Edit"
+    Reader->>UEL: GetValue(element)
+    UEL-->>Reader: "1000"
+    Reader->>Reader: Build announcement: "B5 Edit 1000"
+    Reader->>TTS: Speak("B5 Edit 1000")
+    TTS->>User: Audio: "B5 Edit 1000"

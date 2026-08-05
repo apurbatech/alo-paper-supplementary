@@ -1,0 +1,61 @@
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph s1["User Interface Layer"]
+        A["WinForms UI<br>Tray Icon, Settings"]
+  end
+ subgraph s2["Entry Point"]
+        C["ScreenReaderApplication<br>DI Container Setup"]
+        B["Program.cs<br>Application Bootstrap"]
+  end
+ subgraph s3["Core Framework"]
+        H["EventTokenEngine<br>Priority Queue"]
+        G["UserInputManager<br>Keyboard Hook"]
+        F["DesktopEventManager<br>WinEvent Hooks"]
+        E["ProgramReaderFactory<br>Reader Selection"]
+        D["ProgramWindowManager<br>Window Focus Handler"]
+  end
+ subgraph s4["Reader Plugins"]
+        WA["WhatsAppProgramReader<br>WhatsApp"]
+        N["WebBrowserProgramReader<br>Browsers"]
+        M["PowerPointProgramReader<br>PowerPoint"]
+        L["ZoomProgramReader<br>Zoom Meetings"]
+        K["ExcelProgramReader<br>MS Excel"]
+        J["WordProgramReader<br>MS Word"]
+        I["DefaultProgramReader<br>Fallback"]
+  end
+ subgraph s5["Service Layer"]
+        Q["ITextToSpeechGenerator<br>Speech Synthesis"]
+        P["IUiaServiceFacade<br>UIA Services"]
+        O["IProgramReaderServices<br>Service Facade"]
+  end
+ subgraph s6["UIA Framework"]
+        V["UiaContextService<br>State Management"]
+        U["UiaInteractionService<br>User Actions"]
+        T["UiaNavigationService<br>Tree Navigation"]
+        S["UiaElementService<br>Element Properties"]
+        R["UiaEventService<br>Event Subscriptions"]
+  end
+ subgraph s7["Common Utilities"]
+        Y["HotkeyManager<br>Hotkey System"]
+        X["ScreenReaderSettings<br>Configuration"]
+        W["ComObjectTracker<br>COM Lifecycle"]
+  end
+    A --> B
+    B --> C
+    C --> D & F & G
+    D --> E
+    E --> I & J & K & L & M & N & WA
+    I --> O
+    J --> O & W
+    K --> O & W
+    L --> O & W
+    M --> O & W
+    N --> O
+    WA --> O
+    O --> P & Q & X & Y
+    P --> R & S & T & U & V
+    F --> H
+    G --> H

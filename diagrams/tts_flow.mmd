@@ -1,0 +1,30 @@
+flowchart TD
+    Start[Speak Request] --> Debounce{Check Debounce}
+
+    Debounce -->|Duplicate within 100ms| Ignore[Ignore Request]
+    Debounce -->|New or outside window| Check[Check Text]
+
+    Check --> Nav{Navigation Command?}
+    Nav -->|Up/Down/Left/Right/Tab| Ignore
+    Nav -->|Other text| Detect{Detect Language}
+
+    Detect -->|Contains Bengali<br/>U+0980-U+09FF| Bengali[Route to Bengali API]
+    Detect -->|Latin script| Lexicon{Romanized Bengali<br/>lexicon match?}
+
+    Lexicon -->|Known form| Canonical[Convert to canonical<br/>Bengali script]
+    Canonical --> Bengali
+    Lexicon -->|No match or ambiguous| Local[Route to English engine]
+
+    Bengali --> API[Bengali TextToSpeechApi]
+    API --> PlayAPI[Play Audio from API]
+    PlayAPI --> Done[Complete]
+
+    Local --> SSML{Apply SSML?}
+    SSML -->|Tone/Pitch set| BuildSSML[Build SSML with prosody]
+    SSML -->|Default| Direct[Direct text]
+
+    BuildSSML & Direct --> Synth[SpeechSynthesizer]
+    Synth --> PlayLocal[Speak via System.Speech]
+    PlayLocal --> Done
+
+    Ignore --> Done

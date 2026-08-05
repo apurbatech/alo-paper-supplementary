@@ -1,0 +1,32 @@
+flowchart LR
+    User((User))
+
+    subgraph OS["Windows Accessibility Layer"]
+        UIA["UI Automation Events<br/>Focus, Structure, Property"]
+        Keys["Keyboard Input"]
+    end
+
+    subgraph Core["ALO Core Processing"]
+        Classify["Event Classification"]
+        Coalesce["Priority-Stratified Coalescing<br/>50 ms Window"]
+        Buffer["Virtual Buffer and Indices"]
+        Navigate["Navigation and Context"]
+        Language["Bilingual Text Processing<br/>NFKC, Script Segmentation, Lexicon"]
+    end
+
+    subgraph Adapt["Application Adaptation"]
+        Plugins["Word, Excel, Zoom,<br/>WhatsApp and Web Readers"]
+    end
+
+    subgraph Output["Speech Output"]
+        Bengali["Bengali TTS"]
+        English["English TTS"]
+        Audio["Prioritized Audio"]
+    end
+
+    User --> Keys
+    UIA --> Classify --> Coalesce --> Buffer --> Navigate --> Language
+    Keys --> Navigate
+    Plugins <--> Navigate
+    Language --> Bengali & English
+    Bengali & English --> Audio --> User

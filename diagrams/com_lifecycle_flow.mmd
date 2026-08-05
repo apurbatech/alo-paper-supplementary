@@ -1,0 +1,604 @@
+\documentclass{ieeeaccess}
+
+\makeatletter
+
+\def\@doi{}
+
+\makeatother
+
+\def\xfigwd{\columnwidth}
+
+\usepackage{cite}
+
+\usepackage[dvipsnames]{xcolor}
+
+\usepackage{silence}
+
+\WarningFilter{xcolor}{Incompatible color definition}
+
+\AtBeginDocument{\color{black}}
+
+\usepackage{amsmath,amssymb,amsfonts}
+
+\usepackage{algorithmic}
+
+\usepackage{algorithm}
+
+\usepackage{graphicx}
+
+\usepackage{textcomp}
+
+\usepackage{booktabs}
+
+\usepackage{multirow}
+
+\usepackage{array}
+
+\usepackage{colortbl}
+
+\usepackage{longtable}
+
+\usepackage[T1]{fontenc}
+
+\usepackage{times}
+
+\usepackage{helvet}
+
+\usepackage{courier}
+
+\renewcommand{\ttdefault}{pcr}
+
+\usepackage{hyperref}
+
+% Silence spurious font shape warnings from psnfss packages.
+
+\WarningFilter{latexfont}{Font shape}
+
+\WarningFilter{latexfont}{Some font shapes}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+% \history{Date of publication January 2026, date of current version January 2026.}
+
+% \doi{10.1109/ACCESS.2026.ALOSR}
+
+\title{ALO: A Screen Reader Architecture for Bengali-English Code-Switching with Temporal Event Coalescing}
+
+\author{\uppercase{Md.\ Mahir\ Labib}\authorrefmark{1},
+\uppercase{ANM\ Jubaer}\authorrefmark{1},
+\uppercase{Amirul\ Islam}\authorrefmark{1},
+\uppercase{Partha\ Sutradhar}\authorrefmark{1},
+\uppercase{Bijan\ Paul}\authorrefmark{1},
+\uppercase{AKM\ Shahariar\ Azad\ Rabby}\authorrefmark{1},
+\uppercase{Fuad\ Rahman}\authorrefmark{2}}
+
+\address[1]{Apurba Technologies Ltd., Dhaka, Bangladesh
+(email: mdmahirlabib@gmail.com, jubaerad1@gmail.com, amirulislam00026@gmail.com, partharaj.dev@gmail.com, bijancse@gmail.com, rabby@apurbatech.com)}
+
+\address[2]{Apurba Technologies, CA, USA (email: fuad@apurbatech.com)}
+
+\corresp{Corresponding authors: Md.\ Mahir\ Labib (mdmahirlabib@gmail.com) and Bijan Paul (bijancse@gmail.com)}
+
+% \markboth{Md.\ Mahir\ Labib\ et al.: ALO Screen Reader with Cognitive-Aligned Navigation}{Md.\ Mahir\ Labib\ et al.: ALO Screen Reader with Cognitive-Aligned Navigation}
+
+\begin{abstract}
+Bengali-speaking users face two unresolved problems with existing screen readers. No major tool handles Bengali-English code-switching natively which forces users to switch languages manually or accept unintelligible output. Separately, dynamic interfaces such as Zoom, WhatsApp, Browser applications generate high-frequency UI Automation event bursts that fragment speech and spike CPU usage under existing architectures. We present ALO, a plugin-based intelligent screen reader for Windows that addresses both problems. A three-stage bilingual pipeline handles language routing: Unicode NFKC normalization, sliding-window script tokenization and a 5,000-entry Romanized Bengali lexicon together route each text segment to the correct synthesis engine automatically. A priority-stratified temporal event coalescer suppresses redundant UI Automation events within 50\,ms windows before they reach the speech pipeline, while a pre-indexed virtual buffer enables $O(\log n)$ navigation without live UIA queries. A deterministic two-tier COM lifecycle tracker eliminates the memory leaks common in long-running Windows accessibility clients. Benchmarked against NVDA and JAWS across three hardware configurations, ALO achieved 8--11\% lower event-to-speech latency against NVDA, a 3.7:1 event reduction ratio and 14.5\% lower average CPU load, at the cost of a higher memory footprint of 300-400\,MB from the pre-loaded UIA cache. In a task-based study with 15 visually impaired users in Bangladesh, ALO demonstrated consistent advantages over NVDA and JAWS across all task categories, with the most pronounced differences on Bengali and mixed-language tasks where NVDA's 134.6\,ms per-boundary engine-switching overhead compounded into perceptible lag that ALO's 105.0\,ms end-to-end switching cost reduced meaningfully.
+\end{abstract}
+
+\begin{keywords}
+Accessibility, assistive technology, bilingual text-to-speech, Bengali language processing, event processing, human-computer interaction, Romanized Bengali, screen readers, software architecture, visual impairment, Windows UI Automation.
+\end{keywords}
+
+\maketitle
+
+%% -
+
+\section{Introduction}
+\label{sec:introduction}
+
+Visually impaired people rely on screen readers for almost everything they do on a computer, from reading documents to filling in forms to following a conversation in a group chat \cite{manirajee2024assistive}. Tools like JAWS \cite{jaws_screen_reader} and NVDA \cite{nvda_screen_reader} have gotten very good at this under straightforward conditions. The trouble is that conditions are rarely straightforward anymore. Modern applications update their interfaces constantly, push notifications in rapid bursts and carry content in multiple languages, particularly languages outside the English-dominant mainstream that these tools were built around \cite{hoffman2005emerging}.
+
+Bengali users sit at an uncomfortable intersection of these problems. Everyday communication in Bangladesh routinely mixes Bengali and English within the same sentence, whether in a workplace message, a university assignment or a social media post and no major screen reader handles that natively \cite{ahmed2017ifreephony, era2026evaluating, motahar2025accessibility}. Routing mixed content through English-only TTS engines produces speech that is often completely unintelligible and requiring users to manually switch languages mid-task treats the symptom rather than the underlying problem \cite{sitaram2019survey}.
+
+A separate technical problem compounds this. Active applications like Zoom can trigger hundreds of UI Automation events per second from chat updates and roster changes alone \cite{hinze2009event}. When these pile up, speech fragments mid-sentence, the same text repeats and the CPU spikes. Beyond event volume, monolithic screen reader cores force a meeting platform and a spreadsheet through the same processing pipeline, making it genuinely hard to improve behaviour for one application without breaking something in another \cite{jain2025automated}.
+
+Three research questions follow directly from these gaps: (1) How can a screen reader support Bengali-English code-switching, including Romanized Bengali, without requiring manual language management? (2) How can event processing reduce speech interruptions while retaining important information? (3) How can a flexible system support app-specific accessibility without changing the main system?
+
+To answer these questions, we introduce ALO, a plugin-based screen reader built around Bengali-English bilingual interaction. The system handles Bengali, English and Banglish, the informal mix of Bengali and English scripts common in digital communication in Bangladesh, through a three-stage pipeline: Unicode NFKC normalization and script-based tokenization to segment mixed-language strings, a 5,000-entry Romanized Bengali lexicon to convert phonetically written Bengali into its canonical orthographic form and dual-engine routing to dispatch each text segment to the correct synthesis backend without user intervention. A priority-aware coalescing mechanism reduces speech fragmentation from high-frequency UI Automation streams at the source, rather than relying solely on queuing or interruption. The plugin architecture allows application-specific modules to be developed and deployed independently of the core system. ALO also incorporates a guided onboarding mechanism, motivated directly by what we observed during early deployments: new users were not overwhelmed by the feature depth, but by the sheer volume of commands arriving all at once. Rather than presenting users with a comprehensive command list upfront, the system surfaces hotkeys and navigation patterns incrementally through context-sensitive audio cues as they explore the interface.
+
+Throughout development, blind and low-vision users in Bangladesh participated in extended testing across the core plugins. Recurring feedback on speech clarity, language switching reliability and disorienting interaction patterns was treated as genuine design signal; the guided onboarding mechanism and the prioritization of WhatsApp and Zoom plugins both emerged directly from this process.
+
+The main contributions of this paper are: (i) a three-stage bilingual text-processing pipeline with Unicode normalization, sliding-window tokenization and Romanized Bengali lexicon matching; (ii) a priority-stratified temporal event coalescing mechanism that reduces speech interruptions by a factor of 3.7:1 under typical workloads; (iii) a sandboxed plugin architecture enabling independent development of application-specific readers; (iv) a deterministic COM lifecycle tracker eliminating long-running memory leaks; and (v) comprehensive empirical benchmarking against NVDA and JAWS confirming 8--25\% performance improvements across latency, resource and bilingual processing metrics. The application installer, source code and user manual are provided as supplementary materials (Section~2)\footref{fn:supplementary}.
+
+%% -
+
+\section{Related Work}
+\label{sec:related}
+
+For over two decades the dominant screen reader architecture has followed a shared model: intercept operating system events, translate interface elements into text and route the result through speech synthesis \cite{raman2012auditory}. JAWS \cite{jaws_screen_reader} and NVDA \cite{nvda_screen_reader} each refined this pipeline and perform reliably in stable, well-structured environments. Successive generations of dynamic applications have steadily exposed the limits of that model and research has tried to address them. Early systems read from character buffers directly \cite{thatcher1994screen}, an approach that held up until graphical interfaces arrived and broke the assumption that in-memory text was a reliable map of the visual display. Off-Screen Models were the next attempt to reconstruct that map from rendered output, though they proved noisy and fragile in non-trivial interfaces \cite{mynatt1994nonvisual}. The introduction of MSAA and, later, UI Automation gave screen readers a structured, programmatic window into interface state, which was a meaningful step forward \cite{asakawa1998user}, but the cross-process overhead of querying these APIs introduced latency that users could actually perceive \cite{nino2024assistive}. Virtual buffers addressed this by caching the interface tree locally \cite{bigham2008webanywhere}, yet they depend on well-structured UI trees that many locally developed applications in Bangladesh simply never produce. Work studying how blind users actually move through auditory interfaces \cite{edwards1989modelling, zhao2007earpod} has shaped how feedback is designed and more recent efforts around context-sensitive guidance \cite{gonzalez2025tapnav} and LLM-driven interaction \cite{kodandaram2024enabling} suggest the field is still looking for better answers. What the research keeps returning to is that finding your way through an interface without sight is genuinely hard and the friction has not gone away \cite{jordan2024information}.
+
+The Bengali side of this history tells a different story. Early tools like the Festival-based Bengali screen reader and Mongol Dip showed that bilingual screen reading was possible in principle \cite{amin2012bilingual, khan2014mongoldip, nahar2015design}, but neither could hold up under the demands of real daily use the performance was too slow and the code-switching too unreliable. What is telling is how users responded: studies of South Asian screen reader adoption show that people switch tools based on which one handles their language, not out of any preference for the tool itself \cite{mccarthy2013voice}. That pattern makes the gap feel less like a technical footnote and more like an unmet need that has been quietly shaping behaviour for years. Research in the Bengali assistive technology space has moved steadily forward from OCR and Braille systems \cite{rajbongshi2020bangla, sojib2018braille} to neural TTS and image captioning \cite{ghosh2020assistive, bijoy2025bangla, khan2022bancap}, with NLP work opening further directions \cite{roy2024question} but none of it has brought event load management, bilingual synthesis and a plugin architecture together in one system. Getting Bengali and English to coexist reliably within a single synthesized sentence, in a real-time screen reader, remains an open problem \cite{sitaram2019survey, islam2025review}.
+
+On the event processing side, prior work has addressed high-frequency UI event streams through queuing or interruption \cite{eugster2003many, hinze2009event}, but both approaches manage the backlog after it forms rather than preventing redundant events from entering the pipeline. The structural limitation of monolithic screen reader cores where a meeting platform and a spreadsheet share the same processing path has been identified as a persistent barrier to application-specific accessibility improvements \cite{jain2025automated}, yet scripting-based extensions remain the prevailing workaround. Systems that have addressed performance tend to do so for monolingual, English-dominant contexts; those targeting Bengali accessibility have not attempted event management or extensible plugin architectures. ALO is designed to close that gap.
+
+%% -
+
+\section{System Architecture}
+\label{sec:architecture}
+
+\subsection{Architectural Overview}
+
+ALO was developed across four structured milestones covering architecture design, bilingual processing, plugin integration and system evaluation; the full milestone breakdown is provided in supplementary Section~3\footref{fn:supplementary}. The system is structured as a layered pipeline in which each stage has a single, well-defined responsibility. Raw UI Automation events enter at the bottom; redundant and duplicate signals are discarded before they propagate further. The remaining events are grouped and time-filtered through the coalescing stage to suppress high-frequency noise that would otherwise fragment speech. Filtered events are then translated into navigable units by the virtual buffer, which presents the navigation layer with a clean, indexed representation of the active interface rather than the raw UIA tree. The navigation layer exposes only the elements relevant to the current user action, keeping cognitive load low. Figure~\ref{fig:sys_arch_layers} shows this layered organisation.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{../diagrams/system_architecture.pdf}
+\caption{System Architecture detailing the layered interaction from multimodal I/O to cognitive navigation heuristics.}
+\label{fig:sys_arch_layers}
+\end{figure}
+
+The design prioritizes cognitive load reduction \cite{kalyuga2011cognitive, shneiderman2003eyes}, perceptual latency, extensibility and language parity. Every cross-process path is optimized to keep audio response within the threshold of comfortable human perception; application-specific behavior is isolated in self-contained plugins; and Bengali is handled natively throughout the pipeline rather than bolted on after the fact.
+
+\subsection{Core Framework and Plugin-Based Design}
+
+Application-specific behavior is encapsulated in dynamically loaded plugins. Fig.~\ref{fig:arch} shows how initialization builds a dependency injection container that wires the core framework, shared services and plugin modules into a single runtime. This keeps the core stable while new plugins extend it independently.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{../diagrams/high_level_architecture.png}
+\caption{High-Level Plugin Architecture. The system bootstrap initializes the dependency injection container, which wires the core framework, reader plugins and service layer into a unified, extensible structure.}
+\label{fig:arch}
+\end{figure}
+
+At runtime, \texttt{Desktop\-Event\-Manager} monitors foreground application changes and triggers \texttt{Program\-Reader\-Factory} to load the appropriate plugin. The component relationships are illustrated in Fig.~\ref{fig:plugin_layer}; each plugin is self-contained and communicates with shared services such as UI Automation and text-to-speech through a common interface. Application-specific logic remains isolated within each plugin but the core system acts consistently regardless of which application is active.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{../diagrams/plugin_architecture.png}
+\caption{Plugin Architecture where the DesktopEventManager activates the ProgramReaderFactory to generate specific readings of the plugin.}
+\label{fig:plugin_layer}
+\end{figure}
+
+Each plugin follows a strict lifecycle, illustrated in Fig.~\ref{fig:plugin_discovery}: assembly load, factory registration, instantiation, initialization, active event processing and finally disposal. Plugins subscribe to events only within their own application context and are torn down cleanly when the user switches away or the plugin is no longer needed. Keeping each module responsible for its own cleanup means resources are released predictably, application contexts stay isolated from one another and the system remains stable even under rapid application switching.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{../diagrams/plugin_architecture_flow.png}
+\caption{Plugin Lifecycle States. This state diagram shows the robust initialization, active event processing and deterministic disposal phases of application-specific readers.}
+\label{fig:plugin_discovery}
+\end{figure}
+
+\subsection{Event Flow, Initialization and System Coordination}
+
+Startup follows a fixed dependency order: core services come up first, then plugins initialize against them and event processing begins only once everything is wired. Fig.~\ref{fig:startup_flow} shows this sequence. At runtime, plugins communicate with shared services UIA, TTS, the navigation index through a common service layer, rather than calling each other directly. Focus changes are handled as a distinct case: when UI Automation reports that focus has moved, the system updates its context and triggers a navigation step rather than routing the event through the general property-change path. Window-level transitions follow the sequence in Fig.~\ref{fig:focus_change_flow}.
+
+\begin{figure*}[htbp]
+\centering
+\begin{minipage}{0.48\textwidth}
+ \centering
+ \includegraphics[width=\linewidth]{../diagrams/application_startup_flow.png}
+ \caption{Application Startup Sequence}
+ \label{fig:startup_flow}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+ \centering
+ \includegraphics[width=\linewidth]{../diagrams/uia_focus_change.png}
+ \caption{UI Automation Focus Change}
+ \label{fig:uia_focus}
+\end{minipage}
+\end{figure*}
+
+\begin{figure*}[htbp]
+\centering
+\begin{minipage}{0.48\textwidth}
+ \centering
+ \includegraphics[width=\linewidth]{../diagrams/windows_focus_change_flow.png}
+ \caption{Window Focus Change Sequence}
+ \label{fig:focus_change_flow}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+ \centering
+ \includegraphics[width=\linewidth]{../diagrams/hotkey_processing_flow.png}
+ \caption{Hotkey Processing \& Cancellation Token Logic}
+ \label{fig:event_priority}
+\end{minipage}
+\end{figure*}
+
+Keyboard events go through the same pipeline as everything else. As shown in Fig.~\ref{fig:event_priority}, user actions are not separate; they directly affect what is already in progress. They update the navigation state and also change what gets spoken next. When working with Windows applications, we also have to deal with COM objects and if they are not managed carefully, they can quietly cause memory leaks over time \cite{box1998essential}. In Figure~\ref{fig:com_tracker}, we document the process of tracking and releasing the COM object within ALO. We have classified objects into 2 types: long-lived (primary) and short-lived (secondary). Primary objects are released as soon as their associated plugin unloads or the application context shifts. Secondary objects are periodically swept during low-activity windows rather than held until shutdown. This two-tier release strategy eliminates the memory leaks and dangling object references that routinely appear in COM-based integrations left to framework defaults \cite{hertz2005quantifying}.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{../diagrams/com_lifecycle_flow.png}
+\caption{COM Object tracking and lifecycle management flow. Objects are tracked as Primary or Secondary and released deterministically upon stop or timeout.}
+\label{fig:com_tracker}
+\end{figure}
+
+\subsection{Event Processing and Temporal Coalescing}
+
+Processing every UI Automation event as it arrives without any filtering produces a stream of speech interruptions that is practically unusable under real workloads \cite{welsh2001seda}. ALO addresses this through a temporal coalescing mechanism (Algorithm~\ref{alg:coalesce}) that groups events arriving within the same 50~ms window before deciding what to emit. Events are basically sorted into three priority queues: focus, structure and property. Common events in the window are merged and only the relevant update is emitted. Focus events will always bubble up. Critical events bypass coalescing altogether and are delivered immediately.
+
+\begin{algorithm}
+\caption{Filtering Events}
+\label{alg:coalesce}
+\begin{algorithmic}
+\STATE \textbf{Input:} Stream $S$ of raw events
+\STATE \textbf{Output:} Stream $E$ of coalesced events for speech
+\STATE \textbf{Definition:} $\delta_{window} = 50\text{ms}$ (coalescing window)
+\STATE $Q_{focus} \gets PriorityQueue(High)$
+\STATE $Q_{structure} \gets PriorityQueue(Medium)$
+\STATE $Q_{property} \gets PriorityQueue(Low)$
+\WHILE{$SystemRunning$}
+ \IF{Event $e$ arrives}
+ \IF{$e.Type == Focus$}
+ \STATE $Q_{focus}.Enqueue(e)$
+ \ELSIF{$e.Type == Structure$}
+ \STATE $Q_{structure}.Enqueue(e)$
+ \ELSE
+ \STATE $Q_{property}.Enqueue(e)$
+ \ENDIF
+ \ENDIF
+ \IF{$Timer > \delta_{window}$}
+ \STATE \COMMENT{Flush Buffers in priority order}
+ \IF{!$Q_{focus}.IsEmpty()$}
+ \STATE $e_{latest} \gets Q_{focus}.Last()$
+ \STATE $E \gets E \cup \{e_{latest}\}$
+ \STATE $Q_{focus}.Clear()$ \COMMENT{Drop redundant focus events}
+ \ELSIF{!$Q_{structure}.IsEmpty()$}
+ \STATE $E \gets E \cup ProcessBatch(Q_{structure})$
+ \ELSIF{!$Q_{property}.IsEmpty()$}
+ \STATE $E \gets E \cup ProcessBatch(Q_{property})$
+ \COMMENT{Emit latest property update only}
+ \ENDIF
+ \STATE $ResetTimer()$
+ \ENDIF
+\ENDWHILE
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Virtual Buffer and Navigation Pipeline}
+
+To reduce the latency associated with repeated UI tree traversal, the system employs a virtual buffer that converts hierarchical UI structures into a linear representation \cite{bigham2008webanywhere}. We show in Fig.~\ref{fig:uia_architecture_flow} how raw UI events are turned into navigable elements through filtering, caching and indexing in a single pipeline.
+
+\begin{figure*}[htbp]
+\centering
+\includegraphics[width=\textwidth]{../diagrams/uia_architecture_navigation_flow.png}
+\caption{End-to-End UI Automation Navigation Flow}
+\label{fig:uia_architecture_flow}
+\end{figure*}
+
+The virtual buffer flattens the UI element hierarchy and maintains a sorted index over common structural types headings, links and table cells enabling navigation to any of these at $O(\log n)$ time without re-querying the UI Automation tree. When the buffer provides sufficient structural clarity, the navigation layer reads directly from it. When the interface is irregular or sparsely annotated, the system falls back to lightweight heuristic inference rather than failing silently.
+
+\subsection{Event Capture, State Management and Concurrency}
+
+Keyboard input is processed by an input manager that translates raw key events into semantic navigation commands, which are tightly coupled with the event pipeline, as shown in Fig.~\ref{fig:event_priority}. ALO tracks a centralized application state-focused element, hierarchical context and navigation position and updates them in response to both UI events and user actions (Figs.~\ref{fig:uia_focus} and~\ref{fig:focus_change_flow}). Navigation remains consistent even through rapid context changes. User preferences persist across sessions. Event processing, navigation and speech synthesis run on separate threads. Hazard pointers and cancellation tokens manage shared resource access \cite{michael2004hazard, watson2018writing}. When a higher-priority event arrives, it cancels ongoing lower-priority speech to keep the output current. We run speech synthesis and language identification on background threads so they do not interfere with each other.
+
+\subsection{Bilingual Text-to-Speech Processing}
+
+When text arrives at the synthesis stage, it may be Bengali, English or a mix of both. Fig.~\ref{fig:tts_flow} shows how the pipeline routes each segment to the correct engine.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{../diagrams/tts_flow.png}
+\caption{Text-To-Speech (TTS) routing flow.}
+\label{fig:tts_flow}
+\end{figure}
+
+We begin by verifying each text segment for the presence of Bengali characters within the Unicode range U+0980-U+09FF \cite{islam2025review}. That works for clear cases. Not always, though. Mixed or transliterated text needs something else, so we rely on a lightweight identifier that looks at context and picks the right synthesis path using regional data \cite{ahmad2021sust, sultana2021bangla, samin2024bangladialecto}. Once that decision is made, we use neural synthesis for both Bengali and English, which improves pronunciation and also reduces switching delay \cite{bhattacharjee2021end, liu2025lao, ghosh2025medibeng}. Bengali synthesis is heavier, so we do not keep it on the main thread. We offload it through a WebSocket bridge. The C\# side sends text out and continues; the audio comes back later.
+
+Speech prosody is adjusted using SSML markup: headings receive elevated pitch and rate to signal structural prominence, while metadata is rendered at a softer pitch. ALO's priority-aware queue handles preemption by pausing the current utterance, storing its position and resuming after the higher-priority output completes. Time-critical control states such as microphone or camera changes in Zoom are announced immediately, with a deferred background verification to confirm state accuracy. Application identity cannot always be inferred from window class alone; many Electron-based applications share identical class names, so process-level differentiation is applied before any shortcut bindings are activated to prevent cross-application interference.
+
+%% -
+
+\section{Bilingual Text Processing and Language Routing}
+\label{sec:bilingual}
+
+Mixed Bengali-English content appears throughout the digital environments used in Bangladesh. Bengali and English text regularly coexist within the same interface element, notification, or message thread. Beyond script-mixed content, Romanized Bengali text written in Latin script words such as ``ami,'' ``tumi,'' ``valo,'' or ``kemon acho'' is widespread in casual messaging and social media. Standard screen readers treat all such content as monolingual English, routing it through English synthesis engines and producing output that is either severely mispronounced or entirely unintelligible.
+
+\subsection{Unicode-Based Language Detection}
+
+The first stage of the language routing pipeline uses Unicode codepoint analysis to carry out script-based language detection. Every text segment extracted from a UI Automation element is first normalized using Unicode NFKC normalization, which standardizes character representations, eliminates superfluous whitespace and control characters and resolves compatibility equivalences that arise from differences in application display and input handling. Emojis and symbolic characters are preserved during normalization but excluded from language classification; they are passed directly to the downstream synthesis engine.
+
+Following normalization, the detection system divides characters into three main categories: Bengali script characters in the Unicode range U+0980-U+09FF; Latin script characters in the ranges U+0041-U+007A and extended Latin blocks; and numeric characters together with punctuation symbols. A sliding-window tokenization technique is then applied to segment the text by grouping consecutive characters that belong to the same script category into contiguous tokens. This segmentation allows mixed-language content appearing inside a single interface element to be separated into smaller, language-consistent pieces before routing.
+
+For instance, the interface string ``[Bengali-script token] payment successful'' produces two voice units. The Bengali-script segment is recognized as Bengali text and sent to the Bengali speech synthesis pipeline, whereas the English part ``payment successful'' is routed to the English voice synthesis pipeline. A brief pause is inserted between segments to reduce the perceptual gap between voices.
+
+\subsection{Romanized Bengali Detection and Lexicon Matching}
+
+Romanized Bengali writing, which uses Latin script to write Bengali words such as ``ami,'' ``tumi,'' ``valo,'' or ``kemon acho,'' is a frequent challenge in digital communication in Bangladesh. Unicode script recognition alone is not a reliable method for interpreting such material, since these words appear as ordinary Latin characters. ALO incorporates a lexicon-based Romanized Bengali recognition module to solve this issue. The system's curated dictionary contains approximately 5,000 commonly used Bengali terms and their frequently seen Romanized equivalents.
+
+The lexicon was constructed by combining publicly accessible Bengali dictionaries, frequently used transliteration patterns and manually selected items from informal communication corpora including messaging and social media content. Each lexicon entry maps one or more Romanized surface forms to a canonical Bengali word representation. For instance, the Romanized form ``ami'' is mapped to its Bengali-script equivalent; variants ``valo'' and ``bhalo'' are both mapped to the same Bengali lexical form; and the token ``tumi'' corresponds to its Bengali-script form.
+
+During processing, Latin-script tokens produced by the segmentation stage are compared against the Romanized lexicon. If a match is found, the token value is replaced with its canonical Bengali orthographic representation and forwarded to the Bengali text-to-speech pipeline. Tokens for which no lexicon match exists are routed to the English synthesis engine as English text. This lexicon-based approach effectively recognizes commonly recurring Romanized Bengali patterns. It eliminates the computational expense of phonetic modeling or machine-learning-based transliteration systems, hence it is suitable for real-time screen reader operation.
+
+\subsection{Mixed-Language Speech Synthesis}
+
+Following language detection and Romanized Bengali normalization, each segment is dispatched to the appropriate synthesis backend. Bengali segments are synthesized by the Bengali text-to-speech engine; English segments are processed by the English text-to-speech engine. ALO switches between synthesis engines at segment boundaries established by punctuation and script transitions. Brief pauses are inserted between segments to reduce the perceptual discontinuity between voices.
+
+This segmentation approach generates understandable voice output for mixed Bengali-English content in the majority of interface circumstances, including notifications, form labels and menu items. Sophisticated intra-sentence code-switching remains a known limitation of the current system, especially when Romanized Bengali, acronyms and English proper names appear in the same phrase. Numerical content is routed based on the dominant linguistic context of its surrounding segment: when numbers appear in Bengali-dominant segments, Bengali speech conventions are used; otherwise, English pronunciation is applied.
+
+%% -
+
+\section{Windows Accessibility Support}
+\label{sec:windows_accessibility}
+
+Personal computers remain the primary platform for productivity and digital participation and screen readers are the main interface through which visually impaired users access them \cite{manirajee2024assistive}. ALO is built directly on top of the Windows UI Automation framework, running as a background accessibility client that watches for interface changes, responds to keyboard input and produces audio feedback in real time \cite{asakawa1998user}. Rather than treating Bengali speech support as an add-on, we designed dedicated components for language-aware text processing and interaction patterns that reflect how Bangladeshi users actually communicate and navigate \cite{jain2025automated}.
+
+\subsection{Windows UI Automation Service Integration}
+
+Windows UI Automation gives ALO its structured view into running applications. On startup, ALO registers three event handlers with the UIA subsystem: \texttt{Automation\-Focus\-Changed\-Event\-Handler} for focus movement, \texttt{Automation\-Property\-Changed\-Event\-Handler} for value updates such as a button label or checkbox state and \texttt{Automation\-Structure\-Changed\-Event\-Handler} for elements being added or removed. Between them these three handlers cover essentially everything that changes in a live Windows interface.
+
+Navigation is built around \texttt{Automation\-Element}. ALO calls \texttt{Get\-Focused\-Element()} to track current focus and \texttt{Find\-All()} with a \texttt{Tree\-Scope} and a condition to walk subtrees. Control interaction uses the standard UIA pattern interfaces \texttt{Invoke\-Pattern} for buttons, \texttt{Selection\-Pattern} for lists and \texttt{Value\-Pattern} for editable fields with callbacks delivered through \texttt{IUI\-Automation\-Event\-Handler} on a background thread. During startup, ALO configures event scope, builds the initial navigation index and wires audio feedback before any event is processed. Fig.~\ref{fig:startup_flow} shows the startup sequence and Fig.~\ref{fig:uia_focus} illustrates how a focus change flows through the system.
+
+\subsection{Interaction with the Accessibility Tree}
+
+The accessibility tree provides a structured map of every UI element currently on screen. ALO traverses this tree using the \texttt{AutomationElement} model to collect element names, roles, states and actionable properties. Research on UI automation testing \cite{feng2024enabling} and vision-language UI understanding \cite{li2022spotlight} has demonstrated how rich the UIA tree can be as a source of structured interface information; ALO exploits the same structure but for real-time screen reader navigation rather than test generation. Since many accessibility failures in Windows applications come from missing or poor-quality metadata unlabeled controls, images without names, or dynamically generated content from frameworks such as Flutter, React Native, or Electron the traversal needs to be both thorough and fast \cite{jain2025automated}.
+
+\subsubsection{Efficient Tree Crawl Using CacheRequest}
+
+Reading a property from a UI Automation element is not free each read crosses a process boundary as a COM call. If you do that naively, a screen with 100 elements and seven properties each means 700 separate roundtrips before you can even build the navigation index. ALO avoids this by setting up a \texttt{CacheRequest} before every crawl. The request declares exactly which properties are needed \texttt{Name}, \texttt{Control\-Type}, \texttt{Automation\-Id}, \texttt{Is\-Enabled}, \texttt{Is\-Offscreen}, \texttt{Localized\-Control\-Type} and \texttt{Bounding\-Rectangle} so when \texttt{Automation\-Element.\-Find\-All()} runs with that request attached, the UIA provider fetches everything in one roundtrip and hands back fully populated objects. A typical Windows application with 80-120 visible elements goes from several hundred cross-process calls down to one. This is where most of ALO's traversal speed advantage over NVDA comes from, since NVDA's Python-based COM interop reads each property individually through \texttt{pywin32}.
+
+\subsubsection{Selective Retrieval with Condition Filtering}
+
+Pulling every element out of the subtree and then throwing most of them away in C\# code wastes both the transfer cost and the allocation. Instead, ALO builds an \texttt{OrCondition} from pre-allocated \texttt{PropertyCondition} objects covering only the control types that matter for navigation buttons, edits, text blocks, hyperlinks, list items, menu items, checkboxes and headings and passes it directly to \texttt{Find\-All(\-Tree\-Scope.\-Subtree,\allowbreak{} condition,\allowbreak{} cache\-Request)}. UIA evaluates this filter on the provider side, before any data moves across the process boundary, so irrelevant elements never reach the screen reader process at all. The \texttt{PropertyCondition} objects themselves are created once when the service starts and reused on every subsequent crawl.
+
+\subsubsection{Background Thread Build and Visual-Order Indexing}
+
+When the foreground application changes, the crawl goes onto a background thread immediately, so the main event thread stays free to announce the focus change and handle any keystrokes that come in while the tree is being walked. Once \texttt{FindAll} comes back, the collected elements get sorted by the top-left corner of their \texttt{BoundingRectangle} this puts them in the same order a sighted person would read the screen top-to-bottom, left-to-right, rather than whatever order the application happens to insert them into the tree. That sorted list is then split by \texttt{ControlType} into indexed buckets, so a query like ``jump to next heading'' is a binary search on a small list rather than a scan of everything. Traversal stops at $m = 250$ elements to keep things predictable on interfaces that have unusually deep or wide trees.
+
+\subsubsection{Partial Cache Invalidation on StructureChanged Events}
+
+In something like Zoom or WhatsApp the tree changes constantly new messages arrive, participant lists update, status indicators flip. Rebuilding the whole buffer every time would make the system thrash. Instead, ALO hooks \texttt{Automation\-Structure\-Changed\-Event\-Handler}, which hands back the exact subtree root that changed and a \texttt{Structure\-Change\-Type} telling you whether children were added, removed, or rearranged. ALO re-crawls just that subtree, splices the new entries into the existing index and removes anything that is no longer there. Everything else in the buffer stays as it was. When only a property value changes say a button label updates \texttt{Automation\-Property\-Changed\-Event\-Handler} patches that single cached entry directly, with no traversal needed at all.
+
+Once the buffer is live, every navigation query next heading, next link, next form field is answered from the in-memory index without touching UIA. When metadata is missing or the tree is too sparse to be useful, as happens regularly with Electron or applications that draw their own controls, the plugin layer reads what it can from raw text content and reconstructs enough structure to keep navigation working.
+
+%% -
+
+\section{Interaction, Navigation and Application Support}
+\label{sec:interaction}
+
+ALO surfaces hotkeys and navigation patterns incrementally through context-sensitive audio cues rather than presenting users with a comprehensive command list upfront, a design that emerged directly from early user feedback.
+
+Table~\ref{tab:hotkeys} summarizes the hotkey sets provided by each plugin. The Zoom plugin illustrates the depth that this model enables: 21 purpose-built shortcuts cover core meeting functionality including audio, video, chat, participant management and reactions. Rather than tabbing through interface elements to reach a specific chat message, users can navigate directly by sender, date or message content and compose replies without losing position in the conversation. Facebook presented a different problem: generic browser shortcuts kept colliding with what ALO needed to do, so the Facebook reader defines 9 commands tied specifically to social media tasks, giving each action its own binding rather than fighting over keys the browser already claims. Word and Excel were about a different kind of friction long documents and wide spreadsheets where arrowing through everything line by line is genuinely painful. Structured navigation lets users jump straight to a heading or a table column header, which in practice cuts down the time spent hunting for a specific section considerably \cite{zong2022rich}.
+
+\begin{table*}[htbp]
+\centering
+\caption{ALO Hotkey Summary by Application Context}
+\label{tab:hotkeys}
+\begin{tabular}{|l|l|c|}
+\hline
+\textbf{Context} & \textbf{Functional Groupings} & \textbf{Count} \\
+\hline
+\textbf{Global} & System Toggle, Focus/Browse Modes, Status & 8 \\
+\hline
+\textbf{MS Word} & Navigation, Formatting, Structure (Headings), Browse & 27 \\
+\hline
+\textbf{MS Excel} & Data Grids, Formulas, Table Headers, Sheet Nav & 17 \\
+\hline
+\textbf{MS PowerPoint} & Slides, Shapes, Presentation Mode, Navigation & 14 \\
+\hline
+\textbf{Zoom} & Meeting, Media, Reactions, Chat History Nav & 21 \\
+\hline
+\textbf{WhatsApp} & Chat List, New Message, Sentential Context & 12 \\
+\hline
+\textbf{Facebook} & Post Navigation, Reactions, Comments, Sharing & 9 \\
+\hline
+\textbf{Web/Gmail} & Element Nav, Header/Table Nav, Gmail Compose \& View & 20 \\
+\hline
+\end{tabular}
+\end{table*}
+
+Ablation measurements confirm that each component contributes distinctly. Removing event coalescing raised the raw-event-to-speech ratio from 3.7:1 back to 1:1, increased speech interruption frequency by approximately 3.5$\times$ under Zoom workloads and pushed average CPU utilisation from 7.1\% to 9.4\%, exceeding NVDA's 8.3\% average and confirming that coalescing is the primary source of ALO's CPU efficiency advantage. Disabling cancellation tokens allowed low-priority speech to continue uninterrupted during higher-priority events, increasing observed interaction latency by 40-60\,ms at the 95th percentile. Without the virtual buffer, navigation complexity reverts from $O(\log n)$ to $O(n)$, a difference that is directly perceptible in large documents where heading-jump latency increased from under 40\,ms to over 200\,ms in tested configurations. Formally, let $n$ denote the number of UI elements in the active interface and $k$ the number of events arriving within a coalescing window $\delta$. The virtual buffer maintains a sorted index over element types, enabling navigation queries in $O(\log n)$ time via binary search. The coalescing mechanism processes each arriving event in $O(1)$ amortized time and flushes at most three queues per window for $O(k)$ total work. The empirical reduction factor between raw events and emitted events was about 3.7:1 under typical workloads. BFS-based traversal is bounded by configurable element cap $m$ (default $m=250$), giving $O(m)$ worst-case traversal independent of total tree size.
+
+Table~\ref{tab:comparison} places these differences in context. The architectural gap matters most at the application level: because NVDA and JAWS route every application through a shared monolithic core, improving behaviour for one application risks breaking another. ALO's plugin boundary prevents that. The event-handling difference is similarly consequential in practice temporal coalescing suppresses redundant events before they reach the speech pipeline, whereas queue-with-interrupt approaches manage the backlog only after it has formed. Bengali and Banglish support are absent entirely from both comparators, not offered through degraded fallback paths. The COM lifecycle column reflects a deliberate engineering choice: relying on framework defaults for object release is adequate in short-lived processes but produces measurable leaks in a screen reader that runs continuously for hours.
+
+\begin{table*}[htbp]
+\caption{Architectural and Feature Comparison}
+\label{tab:comparison}
+\centering
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Feature} & \textbf{ALO} & \textbf{NVDA} & \textbf{JAWS} \\ \midrule
+Architecture & Plugin-based (DI container) & Monolithic + Python add-ons & Monolithic + scripting API \\
+Event handling & Temporal coalescing (50\,ms) & Queue with interrupt & Queue with interrupt \\
+Bengali TTS & Native dual-engine routing & Third-party add-on only & Not available \\
+Banglish code-switching & Automatic (Unicode + lexicon) & Not supported & Not supported \\
+Navigation latency & $O(\log n)$ indexed buffer & $O(n)$ tree traversal & Proprietary virtual buffer \\
+COM lifecycle & Explicit two-tier tracker & Python/COM framework defaults & Framework defaults \\
+Speech prosody & SSML pitch/rate markup & Standard SAPI/eSpeak & Standard Eloquence/Vocalizer \\
+Onboarding & Guided progressive learning & Manual documentation & Manual documentation \\
+Braille support & Planned & LibLouis integration & Proprietary driver \\
+Platform & Windows (.NET / C\#) & Windows (Python) & Windows (proprietary) \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+%% -
+
+\section{Evaluation Methodology}
+\label{sec:eval_method}
+
+We carried out empirical studies that measured system responsiveness, efficient use of resources, voice synthesis performance and user task performance in order to assess the efficacy of the ALO screen reader design. The assessment integrated human-centered usability tests with automated system benchmarks to evaluate both technical functionality and practical accessibility outcomes. Detailed user study data and benchmark logs are provided in supplementary Section~5.\footnote{\label{fn:supplementary}The supplementary document is available at: \url{https://drive.google.com/drive/folders/12lT9ZsCfsiYIaH9AekMP_I5HmBZ1IJtA?usp=sharing}}
+
+\subsection{Study A: Participatory Design Evaluation}
+
+Before running any controlled comparisons, we wanted to hear directly from visually impaired users about what was and was not working. This first stage brought participants into the design process rather than treating them as subjects at the end of it, with the goal of gathering honest, grounded feedback on everyday usability and on how well ALO handled Bengali-language content in practice.
+
+\subsubsection{Participant Recruitment}
+
+Participants were recruited through local accessibility advocacy networks and assistive technology communities in Dhaka, Bangladesh. Recruitment criteria included complete blindness or severe visual impairment, regular computer use, familiarity with at least one screen reader and fluency in Bengali. Participants represented varied professional and educational backgrounds to enable diverse usage perspectives. Eight participants took part in this phase. The cohort was intentionally small, consistent with the formative design-review purpose of this stage; results are interpreted qualitatively rather than statistically.
+
+\subsubsection{Workshop Structure}
+
+Each participant took part in two standard sessions, each lasting approximately two hours, held at the Bangladesh Computer Council accessibility laboratory. The first session focused on feature exploration and usability assessment. In the first session, participants used ALO to do things they would normally do on a computer reading notifications, moving through application menus, typing messages that mixed Bengali and English and browsing Bengali websites. As they worked, we asked them to speak their thoughts out loud so we could hear where things felt natural and where they got stuck. The second session was more of a conversation. Participants came back having already tried the system, so we could have a direct discussion about what bothered them things like which keyboard shortcuts felt unintuitive, whether the speech rate was right and how reliably the system switched between Bengali and English.
+
+\subsubsection{Data Collection}
+
+We conducted all study procedures under a protocol reviewed and approved by Apurba Technologies Ltd.\ before any participant was approached. We are grateful to EBLICT, Bangladesh for their logistical support in facilitating participant access and session coordination. Before data collection began, we obtained written informed consent from every participant and made clear that withdrawal at any point carried no consequence and that all responses would be anonymized prior to analysis. During sessions, we collected observational notes, conducted informal interviews and administered formal feature assessments. Participants rated system features on a 10-point satisfaction scale and shared open-ended qualitative comments. We audio-recorded all feedback sessions with participant consent and applied thematic coding to identify recurring patterns across responses.
+
+\subsection{Study B: Controlled Task-Based Comparison}
+
+The second stage was a controlled within-subject comparison of ALO against NVDA and JAWS, using standardized tasks designed to reflect real usage scenarios for visually impaired Bangladeshi users.
+
+\subsubsection{Participants}
+
+Through Dhaka's community networks and accessibility groups, fifteen visually impaired individuals were recruited. All participants reported using NVDA, JAWS, or comparable assistive technology as their primary screen reader and had an average of 4.2 years of screen reader experience. The age range was 21 to 47 years (mean = 32.6 years). All participants were fluent Bengali speakers who could independently carry out typical computer interaction tasks.
+
+\subsubsection{Experimental Design}
+
+All participants used three screen readers ALO, NVDA and JAWS to perform an identical set of tasks as part of a within-subject experimental design. The order was counterbalanced among participants to reduce order effects. Each participant received a short orientation session introducing ALO's navigation commands and shortcuts before task execution.
+
+\subsubsection{Task Design}
+
+Evaluation tasks were designed to represent common Windows computing scenarios that visually impaired Bangladeshi users encounter. Tasks covered three categories: (i) \textit{document navigation}, requiring participants to locate and read specific sections within a multi-heading Microsoft Word document; (ii) \textit{mixed-language text input}, requiring participants to compose a message with a Bengali subject line and mixed Bengali-English body text; and (iii) \textit{Bengali web browsing}, requiring participants to locate specific information within a Bengali government service portal. Each task had well-defined start and completion conditions.
+
+\subsubsection{Evaluation Metrics}
+
+Three metrics assessed system performance: task completion time in seconds, number of interaction errors and total interaction count. Interaction errors included incorrect navigational actions, inadvertent activation of interface components and failures to locate required interface elements. Interaction counts included focus changes, activation commands and keyboard navigation inputs recorded throughout task execution.
+
+\subsection{System Benchmarking Methodology}
+
+System benchmarking tests were carried out across the three hardware configurations shown in Table~\ref{tab:test_env}. Performance metrics included event-to-speech latency, navigation latency, event processing throughput, CPU utilization, memory consumption and battery impact. Event timestamps were recorded using \texttt{Stopwatch.\-Get\-Timestamp()} and \texttt{DateTime.\-Utc\-Now} via the high-precision .NET timing APIs. Speech output start timings were captured via \texttt{Speak\-Progress\-Changed} TTS callbacks. Resource consumption measurements were collected using Windows Performance Monitor counters (\texttt{Process\-Counter}, \texttt{Memory\-Counter}) and \texttt{Performance\-Counter} diagnostics during controlled navigation workloads.
+
+\begin{table}[htbp]
+\centering
+\caption{Evaluation Device Configurations}
+\label{tab:test_env}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Config} & \textbf{CPU} & \textbf{RAM} & \textbf{Storage} & \textbf{OS} \\ \midrule
+A & Intel Core i7 (13th Gen) & 16 GB & 512 GB SSD & Windows 11 \\
+B & Intel Core i5 (10th Gen) & 16 GB & 256 GB SSD & Windows 10 \\
+C & Intel Core i5 (8th Gen) & 16 GB & HDD & Windows 10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% -
+
+\section{Empirical Assessment}
+\label{sec:empirical}
+
+We evaluated three aspects of system behaviour that matter most in practice: how quickly the system responds to accessibility events, how it handles keyboard input and how it holds up under sustained use. Each reflects a real cost for blind users a slow response or a CPU spike during a long session is not a benchmark number, it is a broken interaction.
+
+\subsection{Navigation and Keyboard Input Latency}
+
+Navigation latency is the time interval between detection of a keyboard input event and execution of the corresponding accessibility action. For non-visual navigation to be responsive, low latency is necessary. The mean latency for single keystroke navigation is 71.4\,ms ($\sigma = 12.6$\,ms) on Configuration~C and 58.3\,ms ($\sigma = 9.4$\,ms) on Configuration~A. For arrow-key directional navigation, slightly higher latency is observed due to focus traversal processing, averaging 84.7\,ms ($\sigma = 14.3$\,ms) on Configuration~C and 69.2\,ms ($\sigma = 10.8$\,ms) on Configuration~A. These figures are comparable to NVDA on equivalent hardware; the advantage comes under sustained dynamic load where the coalescing mechanism and indexed virtual buffer reduce cumulative processing overhead. Across all three hardware configurations, the 95th percentile latency stayed under 140\,ms, within acceptable bounds for screen reader interaction (Table~\ref{tab:perfcomp}).
+
+\subsection{Accessibility Event Processing Throughput}
+
+The system's capacity to handle frequent UI state changes produced by dynamic Windows interfaces is represented by accessibility event throughput. Under controlled event generation workloads simulating rapid focus transitions, scroll events and notification updates across multiple running applications, ALO sustained approximately 1,050 events per second on Configuration~C and up to 1,234 events per second on Configuration~A, compared to NVDA's sustained throughput of 847 events per second under equivalent load. The temporal coalescing mechanism achieved an empirical reduction factor of approximately 3.7:1 between raw events received and events emitted for speech processing under typical workloads. Across all test configurations, the average processing latency per event was 23.4\,ms.
+
+\subsection{System Resource Overhead}
+
+Screen readers run continuously in the background throughout all computer use, making resource efficiency critical. During active navigation sessions, ALO consumed an average of 7.1\% CPU (peak 16.4\% during intensive event processing), compared to NVDA's 8.3\% average (peak 19.6\%) and JAWS's 9.1\% average (peak 22.8\%), a 14.5\% improvement in average load over NVDA (Table~\ref{tab:perfcomp}). The modest CPU advantage reflects ALO's coalescing filter reducing downstream processing work; under light navigation loads the .NET runtime and background thread pool bring ALO's consumption close to NVDA's. JAWS runs heavier due to its always-on background service processes despite its compiled C++ core. Memory usage is where ALO pays for its speed. At baseline, ALO holds around 318\,MB and climbs to about 387\,MB during heavy TTS activity compared to NVDA at 43.6\,MB (single process) and JAWS at 164.8\,MB (all background service processes combined). That difference comes directly from the pre-populated UIA property cache, the in-memory navigation index and the background thread structures that make zero-latency navigation queries possible. The footprint is stable: an eight-hour session showed memory growth below 1.2\% per hour with no COM object accumulation, so the number is high by design rather than by leak. Table~\ref{tab:perfcomp} summarizes the full comparative performance metrics across all three systems.
+
+\begin{table*}[htbp]
+\centering
+\caption{Performance Comparison: ALO vs.\ NVDA vs.\ JAWS}
+\label{tab:perfcomp}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Metric} & \textbf{ALO} & \textbf{NVDA} & \textbf{JAWS} & \textbf{ALO vs.\ NVDA Gain} \\
+\midrule
+Focus change - simple & 86.4\,ms & 94.2\,ms & 79.3\,ms & 8.3\% \\
+Focus change - complex & 124.8\,ms & 138.7\,ms & 114.6\,ms & 10.0\% \\
+Text update - short & 96.2\,ms & 108.4\,ms & 93.1\,ms & 11.3\% \\
+Single keystroke navigation$^{\ddagger}$ & 71.4\,ms & 78.6\,ms & 65.4\,ms & 9.2\% \\
+Bengali TTS init & 140.6\,ms & 187.4\,ms & N/A & 25.0\% \\
+Language switching overhead & 105.0\,ms & 134.6\,ms & N/A & 22.0\% \\
+Avg.\ CPU usage & 7.1\% & 8.3\% & 9.1\% & 14.5\% \\
+Peak CPU usage & 16.4\% & 19.6\% & 22.8\% & 16.3\% \\
+Baseline memory & 318\,MB & 43.6\,MB & 164.8\,MB & trade-off for speed \\
+Peak memory (TTS active) & 387\,MB & 54.8\,MB & 198.4\,MB & trade-off for speed \\
+Event throughput (sustained)$^{\dagger}$ & 1,234/s & 847/s & 712/s & 45.7\% \\
+Peak event throughput$^{\dagger}$ & 1,567/s & 1,127/s & 987/s & 39.0\% \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^{\dagger}$Peak hardware (Configuration A: Intel Core i7 13th Gen, 16\,GB RAM, 512 GB SSD). ALO sustained 1,050/s on Configuration C.} \\
+\multicolumn{5}{l}{\footnotesize $^{\ddagger}$Measured on Configuration C (Intel Core i5 8th Gen, HDD). ALO achieved 58.3\,ms on Configuration A.} \\
+\multicolumn{5}{l}{\footnotesize JAWS memory includes all background service processes (JFW.exe + supporting services). NVDA memory reflects single-process footprint.}
+\end{tabular}
+\end{table*}
+
+\subsection{Speech Synthesis Performance}
+
+We measured four aspects of speech output: how fast synthesis starts, how smoothly the system switches between languages, how accurately the output is understood and how it recovers when something goes wrong.
+
+\subsubsection{Speech Synthesis Latency}
+
+Speech synthesis latency measures the time interval between accessibility event detection and initiation of audio output. Bengali speech synthesis exhibited mean latency of 89.3\,ms ($\sigma = 15.7$\,ms) for short phrases (1-5 words) and 127.4\,ms ($\sigma = 23.2$\,ms) for longer sentences (10-15 words). English synthesis was a bit faster, averaging 76.8\,ms ($\sigma = 12.4$\,ms) for short phrases and 108.9\,ms ($\sigma = 19.6$\,ms) for longer ones. Bengali takes longer because there is more work happening before the audio even starts the text has to go through NFKC normalization, get checked against the Romanized Bengali lexicon and then be dispatched over the WebSocket bridge to the background synthesis engine. The 95th percentile latencies were 156\,ms for Bengali and 134\,ms for English, both within acceptable bounds for real-time interaction.
+
+\subsubsection{Language Switching Performance}
+
+Mixed-language interface elements require language boundary detection, segment routing and TTS engine switching. Language boundary identification via the sliding-window tokenization mechanism averaged 23.7\,ms ($\sigma = 8.3$\,ms) for typical mixed-content scenarios, while voice engine switching required approximately 105.0\,ms ($\sigma = 18.7$\,ms). For mixed sentences containing both Bengali and English segments, total processing time averaged 258.3\,ms ($\sigma = 42.4$\,ms), inclusive of segmentation, detection, lexicon lookup and dual-engine synthesis coordination. For comparison, NVDA's Bengali add-on incurs 134.6\,ms for the engine-switching step alone, without accounting for the preceding segmentation and detection stages; ALO's end-to-end switching cost of 105.0\,ms represents a 22.0\% reduction over that step, while covering a broader processing scope (Table~\ref{tab:perfcomp}).
+
+\subsubsection{Intelligibility}
+
+To assess output intelligibility, we ran synthesized speech through the Google Cloud Speech-to-Text API for English and the SUST-Bangla ASR model \cite{ahmad2021sust} for Bengali. We tested 200 sentences per language, keeping the test material entirely separate from anything used to build the Romanized Bengali lexicon so the scores would not be inflated by overlap. Bengali synthesis came in at 91.2\% word-level recognition accuracy; human Bengali recordings of the same sentences scored 94.7\%, giving a sense of the gap still left to close. English synthesis reached 96.8\%, just under the 98.1\% human reference. On prosody, the synthesized Bengali fundamental frequency sat at 187\,Hz ($\sigma = 34$\,Hz) for male voices and 276\,Hz ($\sigma = 41$\,Hz) for female voices, both within the range expected of native Bengali speakers. Two independent annotators reviewed 100 synthesized sentences for sentence boundary pauses and agreed on correct placement in 87.3\% of cases.
+
+\subsubsection{Failure Recovery Behavior}
+
+System resilience was assessed across 30 simulated failure events per failure type on each of the three hardware configurations (90 trials total per type). Engine failure was simulated by programmatically terminating the Bengali synthesis process mid-utterance; audio resource conflict was simulated by forcing exclusive audio device acquisition from a second process. When the primary synthesis engine became unavailable, ALO detected the failure, fell back to a SAPI-based synthesis path and resumed audio output in approximately 340\,ms ($\sigma = 67$\,ms). Audio resource conflicts were resolved with an average recovery time of 1.23\,s ($\sigma = 0.34$\,s), during which non-speech cues preserved navigation context. Under memory pressure exceeding 90\%, ALO automatically reduced synthesis complexity to preserve functional output; recovery to full-quality synthesis completed in 2.1\,s ($\sigma = 0.8$\,s) with a 97.3\% success rate across all trials.
+
+\subsection{Task-Based Comparative Assessment}
+
+Standardized Windows interaction tasks were used in Study~B to compare ALO with NVDA and JAWS across three categories: document navigation, mixed-language text input and Bengali web browsing. All fifteen participants completed every task on all three systems.
+
+For English-only document navigation, the differences between systems were present but modest. NVDA and JAWS both handle structured English content reasonably well and participants familiar with either tool navigated comfortably. ALO's indexed virtual buffer reduced the number of keystrokes needed to reach a target heading, which participants noticed, but the gap was not dramatic for purely English content.
+
+The picture changed substantially once Bengali entered the picture. Both NVDA and JAWS rely on explicit language markup in the source document or application to trigger any language-aware synthesis behaviour. In practice, neither Zoom chat messages, WhatsApp notifications nor Bengali government web portals carry such markup, so both tools fell back to their configured default synthesizer and attempted to render Bengali text as English. The resulting output ranged from heavily mispronounced to completely unintelligible and participants using those tools had to either mentally decode the garbled audio or manually switch synthesizers between segments, a process that interrupts the interaction flow entirely.
+
+ALO's bilingual pipeline handled the same content without any user intervention. Language boundary detection via sliding-window tokenization averaged 23.7\,ms per segment and the full engine-switching step completed in approximately 105.0\,ms end-to-end. NVDA's Bengali add-on, when present, requires around 134.6\,ms for the engine switch alone, before any segmentation or detection has occurred. This gap is not incidental. In a task involving a message thread or web page with a dozen or more Bengali segments, a consistent 30\,ms per-boundary saving accumulates into a perceptibly smoother experience. The benchmark latencies measured in Section~\ref{sec:empirical} therefore translate directly into task-level differences: participants using ALO moved through Bengali content at a pace comparable to how they experience English content on familiar tools, whereas NVDA and JAWS introduced a noticeable pause or outright synthesizer failure at each language boundary.
+
+Romanized Bengali, the Latin-script Bengali common in WhatsApp and social messaging, was the sharpest point of contrast. Neither NVDA nor JAWS have any mechanism to detect or handle it; both tools read words like ``ami'' or ``kemon acho'' as English and produce output that bears no relation to the intended meaning. ALO's lexicon-matching stage recognises these tokens and routes them to the Bengali synthesis engine, which participants found immediately useful given how frequently Romanized Bengali appears in everyday digital communication in Bangladesh. Across the mixed-language input and Bengali web browsing tasks, participants using ALO were able to complete their work without stopping to correct or reinterpret synthesizer output, a pattern that was consistent across the cohort and across all three hardware configurations.
+
+\subsection{Long-Term System Stability}
+
+To assess system stability, ALO was subjected to continuous operational testing over extended sessions. Memory usage stabilized at approximately 324\,MB ($\sigma = 18.4$\,MB) after initial launch, reflecting the fully populated UIA cache and navigation index and grew very little beyond that over long periods. The COM lifecycle tracker recycled over 99\% of acquired COM objects across all tested sessions, with no memory leaks detected. Event listener cleanup achieved 100\% success across all accessibility events processed and TTS processing resources were correctly released after each synthesis operation. Audio feedback remained consistently responsive across all stability sessions.
+
+\subsection{User Satisfaction with Visually Impaired Participants}
+
+\subsubsection{Comparative Preference Analysis}
+
+Preference results were unambiguous for Bengali tasks. Every participant chose ALO over NVDA and JAWS for reading Bengali text and for mixed Bengali-English content. Thirteen out of fifteen participants (86.7\%) preferred ALO for general system navigation and Bengali web browsing. For English-only content, eight out of fifteen participants (53.3\%) preferred ALO, highlighting that ALO's primary advantage lies in the Bengali and bilingual domain where existing tools are inadequate. No participant preferred NVDA or JAWS for any Bengali-language task.
+
+\subsubsection{Qualitative Feedback}
+
+Think-aloud sessions and structured interviews revealed recurring themes. The Bangla-specific TTS pipeline was identified as the system's most significant innovation: all participants found that ALO's Bengali pronunciation was substantially superior to NVDA and JAWS. Multiple participants independently reported more responsive keyboard navigation, easier language switching between Bengali and English and quicker navigation for Bengali content.
+
+Primary areas for improvement were the learning curve for the full feature set, occasional latency during Bengali synthesis under high system load and the absence of Braille display support. Of the fifteen participants, thirteen (86.7\%) indicated they would use ALO as their primary screen reader for Bengali content, while the remaining two indicated they would selectively use ALO for Bengali applications alongside NVDA for English-dominant workflows. All fifteen said they would take part in follow-up testing.
+
+\subsubsection{Application-Specific Feedback}
+
+Visually impaired testers particularly valued the Zoom, WhatsApp and browser plugins, citing these as the most difficult application contexts to navigate with general-purpose screen readers. Within Zoom, the ability to send meeting reactions and navigate chat history by sender or time without losing focus context was cited as a substantial usability improvement. In WhatsApp specifically, several participants mentioned that one of their regular frustrations with NVDA was losing track of where they were when switching between the chat list and an open conversation. ALO keeps that context intact, so moving back and forth no longer means starting over. For Word and Excel, what stood out was being able to jump directly to a heading or a table column header rather than arrowing through everything line by line something participants said saves a lot of time in longer documents \cite{zong2022rich}. A few participants who had struggled with NVDA's learning curve also noted that ALO's approach of surfacing shortcuts gradually as they used the system made it much easier to get going without sitting down with a manual first \cite{chen2026struggle}.
+
+%% -
+
+\section{Limitations}
+\label{sec:limitations}
+
+The Bengali TTS engine handles general vocabulary well but struggles with dialectal variation and domain-specific terms medical and legal text in particular comes out mispronounced often enough to be a practical limitation, consistent with what neural TTS systems produce for low-resource language variants. The Romanized Bengali lexicon covers approximately 5,000 common terms; tokens not in the lexicon are silently routed to the English synthesis engine, which may produce incorrect output for uncovered Romanized Bengali words.
+
+ALO's pre-loaded UIA cache and in-memory navigation index require 300-400\,MB of RAM, which is substantially more than NVDA or JAWS. This is a deliberate speed-memory trade-off. Given that ALO peaks at approximately 387\,MB and the host OS and target applications typically consume a further 400-600\,MB, systems with less than 1\,GB of available RAM are at risk of paging under simultaneous load, which may concern users on shared or constrained hardware. Event coalescing trades some immediacy for fewer interruptions and can introduce minor delays of up to 50~ms in certain situations. In fast-moving interfaces such as live code editors or real-time dashboards, this delay is occasionally perceptible. On Configuration~C hardware, rapid plugin switching or handling high-frequency UI Automation events from applications like Zoom occasionally produced speech latencies approaching 150~ms under peak load; general navigation and speech were not affected under normal usage conditions.
+
+ALO currently runs only on Windows because it depends on UI Automation and COM APIs and supporting other platforms would require either substantial porting effort or a platform-abstraction layer. Applications built on Flutter, React Native, or Electron sometimes expose incomplete or malformed UI Automation trees, providing insufficient accessibility metadata for reliable navigation. The heuristic fallback layer mitigates this impact, but element labelling accuracy is reduced compared to natively accessible applications. Although ALO's modular architecture promotes maintainability, it adds inter-component communication overhead that is measurable on older hardware (Configuration~C), where garbage collection pressure \cite{bacon2004unified} can cause audio feedback delays greater than 200~ms under extreme system load.
+
+%% -
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+ALO addresses multilingual interaction, high-frequency event processing and extensibility for Bengali-English users on Windows. A three-stage bilingual pipeline combining Unicode NFKC normalization, sliding-window tokenization and a 5,000-entry Romanized Bengali lexicon switches between Bengali, English and mixed content without user intervention. Priority-based temporal event coalescing reduced speech interruptions by a 3.7:1 ratio while preserving priority alerts. A sandboxed plugin architecture keeps application-specific extensions isolated from the core and deterministic two-tier COM lifecycle management eliminates the memory leaks common in long-running COM-based integrations. Empirical evaluation confirms that the architecture delivers measurable improvements across all tested dimensions. ALO achieves event-to-speech latency 8--11\% lower than NVDA across standard interaction scenarios, maintains accessible event-processing throughput over 1,200 events per second and reduces average CPU consumption by approximately 14.5\% compared to NVDA under dynamic load conditions. At the 95th percentile, navigation latency stays below 140\,ms, within acceptable bounds for responsive real-time engagement. Bengali TTS initialization is 25.0\% faster than NVDA's Bengali add-on and language-switching overhead is reduced by 22.0\%. Task-based evaluation with 15 experienced screen reader users confirmed consistent advantages across all task categories, most pronounced in Bengali text-input and mixed-language web browsing where NVDA and JAWS produced unintelligible output at language boundaries that ALO resolved automatically. User preference analysis confirmed that 86.7\% of participants preferred ALO for Bengali and mixed-language interaction, while all participants preferred it specifically for mixed Bengali-English content. All components required to reproduce these results installer, source code, benchmark logs and evaluation data are documented in supplementary Sections~2 and~7\footref{fn:supplementary}.
+
+Although Bengali has over 230 million speakers, the tools available to them especially for assistive technology lag far behind what exists for English or other Western languages. For visually impaired people in Bangladesh specifically, that gap is not just an inconvenience; it affects whether someone can read a government form, hold a job that involves a computer, or take part in an online class \cite{era2026evaluating, motahar2025accessibility, munna2025advancing}. ALO is a direct response to that. When a screen reader can actually handle the way people in Bangladesh write and speak switching between Bengali and English mid-sentence, or typing Bengali words in Latin script it stops being a workaround and starts being a tool people can genuinely rely on. Because the plugin architecture keeps application-specific logic separate from the core, adding support for a new locally relevant application does not require touching anything that already works.
+
+Future work will focus on expanding the Romanized Bengali lexicon, incorporating lightweight statistical disambiguation for ambiguous tokens, improving Bengali TTS pronunciation for domain-specific terminology and conducting a longitudinal field study with a larger participant cohort. Braille display integration and cross-platform accessibility API support are planned extensions. The bilingual routing design is not Bengali-specific; the same pipeline architecture can be extended to other code-switching pairs common in multilingual digital environments, including Hindi-English, Urdu-English and Tamil-English, offering a replicable path for improving digital accessibility for other under-resourced language communities.
+
+\bibliographystyle{IEEEtran}
+
+\bibliography{reference}
+\EOD
+\end{document}

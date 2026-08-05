@@ -1,0 +1,22 @@
+stateDiagram-v2
+    [*] --> Discovered: Plugin Assembly Loaded
+    Discovered --> Registered: Factory Registration
+    Registered --> Instantiated: Window Match
+    Instantiated --> Initialized: Init(ProgramEventArgs)
+    Initialized --> Started: OnStart()
+    Started --> EventsAttached: AttachEvent()
+    EventsAttached --> Active: Subscriptions Active
+
+    Active --> Processing: Event Received
+    Processing --> Active: Handle Event
+
+    Active --> Loop: 5-second timer
+    Loop --> Active: OnLoop() executed
+
+    Active --> HotkeyRefresh: Hotkey Changed
+    HotkeyRefresh --> Active: ChangeHotKey()
+
+    Active --> EventsDetached: Window Lost Focus
+    EventsDetached --> Stopped: DetachEvent()
+    Stopped --> Disposed: OnStop()
+    Disposed --> [*]: Reader Released

@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant Main as Program.Main()
+    participant App as ScreenReaderApplication
+    participant DI as Autofac Container
+    participant DEM as DesktopEventManager
+    participant UIA as UiaEventService
+    participant PWM as ProgramWindowManager
+    participant UI as WinForms UI
+
+    Main->>Main: SetupGlobalExceptionHandlers()
+    Main->>App: new ScreenReaderApplication()
+    App->>DI: RegisterCoreDependencies()
+    DI->>DI: Register Core Services (Singletons)
+    DI->>DI: Register UIA Services
+    DI->>DI: Register Reader Factory
+    App->>DI: Build Container
+    DI->>DEM: Auto-activate DesktopEventManager
+    DEM->>DEM: Start WinEvent Hook
+    DEM->>DEM: Start Message Loop (STA Thread)
+    DI->>UIA: Auto-activate UiaEventService
+    UIA->>UIA: SetupFocusChangeHandler()
+    DI->>PWM: Auto-activate ProgramWindowManager
+    PWM->>DEM: Subscribe to FocusedProgramChangedEvent
+    App->>UI: Show Main Window
+    UI->>UI: Display Tray Icon

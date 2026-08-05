@@ -1,0 +1,24 @@
+graph TB
+    subgraph "Core Framework"
+        Mgr[ProgramReaderFactory]
+        Events[DesktopEventManager]
+    end
+
+    subgraph "Plugin Layer"
+        I[DefaultReader]
+        J[WordReader]
+        K[ExcelReader]
+        L[ZoomReader]
+        M[WebReader]
+    end
+
+    subgraph "Service Facade"
+        Svc[IProgramReaderServices]
+        UIA[UiaServiceFacade]
+        TTS[TextToSpeech]
+    end
+
+    Events -->|"Window Focus"| Mgr
+    Mgr -->|"Create"| J & K & L
+    J & K & L -->|"Consume"| Svc
+    Svc --> UIA & TTS

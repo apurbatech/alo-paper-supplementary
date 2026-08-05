@@ -1,0 +1,168 @@
+flowchart TB
+
+    %% ======================
+    %% User Input
+    %% ======================
+    subgraph UserInput["👤 User Input"]
+        KEY["Keyboard Input<br/>H, K, F, T, D, Arrow Keys"]
+        MOUSE["Mouse / Focus Change"]
+    end
+
+    %% ======================
+    %% Event Layer
+    %% ======================
+    subgraph EventLayer["📡 Event Layer - UiaEventService"]
+        direction TB
+
+        UIA_EVENTS["UIA Events from OS<br/>(1000+ events/sec during page load)"]
+
+        subgraph Coalescer["🔄 UiaEventCoalescer (50ms window)"]
+            FOCUS_Q["Focus Queue"]
+            STRUCT_Q["Structure Queue"]
+            PROP_Q["Property Queue"]
+            COALESCE_TIMER["Coalesce Timer<br/>Combines duplicates"]
+        end
+
+        COALESCED_OUT["Coalesced Events<br/>(~20 events/sec)"]
+    end
+
+    %% ======================
+    %% Threading Layer
+    %% ======================
+    subgraph ThreadLayer["🧵 Threading Layer"]
+        direction LR
+        UI_THREAD["UI Thread<br/>STA - Responsive"]
+        MTA_THREAD["MTA UIA Thread<br/>UiaThreadManager"]
+        WORK_QUEUE["Work Queue<br/>Priority-based"]
+    end
+
+    %% ======================
+    %% Cache Layer
+    %% ======================
+    subgraph CacheLayer["💾 Cache Layer - UiaCacheRequestManager"]
+        direction TB
+
+        subgraph CacheRequests["Pre-built CacheRequests"]
+            CR_STD["Standard<br/>15 properties"]
+            CR_NAV["Navigation<br/>10 properties + children"]
+            CR_MIN["Minimal<br/>4 properties"]
+            CR_FULL["Full<br/>40+ properties"]
+        end
+
+        BATCH_IPC["BATCH IPC Call<br/>1 call = ALL properties"]
+
+        subgraph LocalCache["Local TTL Cache"]
+            STATIC_CACHE["Static Props<br/>5s TTL"]
+            DYNAMIC_CACHE["Dynamic Props<br/>500ms TTL"]
+        end
+    end
+
+    %% ======================
+    %% Virtual Buffer
+    %% ======================
+    subgraph VirtualBuffer["📄 Virtual Buffer - ALO"]
+        direction TB
+
+        subgraph BufferManager["VirtualBufferManager"]
+            LOAD_DOC["LoadDocumentAsync<br/>Flatten entire tree"]
+            AUTO_REFRESH["Auto-refresh on<br/>structure change"]
+        end
+
+        subgraph FlattenedTree["Flattened Document (Local Memory)"]
+            NODES["VirtualBufferNode[]<br/>Configurable crawl cap m = 250"]
+
+            subgraph QuickIndices["Sorted Indices - O(log n) navigation"]
+                IDX_HEAD["Heading Index"]
+                IDX_LINK["Link Index"]
+                IDX_FORM["Form Field Index"]
+                IDX_TABLE["Table Index"]
+                IDX_LAND["Landmark Index"]
+            end
+
+            RUNTIME_IDX["RuntimeId → Index<br/>HashMap"]
+        end
+
+        subgraph InstantNav["⚡ Instant Navigation"]
+            NAV_NEXT["Move Next / Previous"]
+            NAV_HEAD["Next Heading (H)"]
+            NAV_LINK["Next Link (K)"]
+            NAV_FORM["Next Form Field (F)"]
+            NAV_TABLE["Next Table (T)"]
+            NAV_LAND["Next Landmark (D)"]
+        end
+    end
+
+    %% ======================
+    %% Navigation Service
+    %% ======================
+    subgraph NavigationService["🧭 UiaNavigationService_v002"]
+        direction TB
+
+        NAV_DECIDE{"Virtual Buffer<br/>Loaded?"}
+
+        subgraph FastPath["⚡ Fast Path"]
+            BUFFER_NAV["Local Buffer Lookup<br/>< 1ms — No IPC"]
+        end
+
+        subgraph SlowPath["🐢 Slow Path"]
+            TREE_WALKER["TreeWalker Navigation"]
+            CACHED_WALK["With CacheRequest<br/>~15ms total"]
+        end
+    end
+
+    %% ======================
+    %% Output
+    %% ======================
+    subgraph Output["🔊 Output"]
+        CONTEXT["UiaContextService<br/>Current Element State"]
+        TTS["Text-to-Speech"]
+    end
+
+    %% ======================
+    %% Event Flow
+    %% ======================
+    UIA_EVENTS --> FOCUS_Q
+    UIA_EVENTS --> STRUCT_Q
+    UIA_EVENTS --> PROP_Q
+    FOCUS_Q --> COALESCE_TIMER
+    STRUCT_Q --> COALESCE_TIMER
+    PROP_Q --> COALESCE_TIMER
+    COALESCE_TIMER --> COALESCED_OUT
+    COALESCED_OUT --> AUTO_REFRESH
+
+    %% ======================
+    %% User Input Flow
+    %% ======================
+    KEY --> NAV_DECIDE
+    MOUSE --> UIA_EVENTS
+
+    %% ======================
+    %% Navigation Decision
+    %% ======================
+    NAV_DECIDE -->|Yes| BUFFER_NAV
+    NAV_DECIDE -->|No| TREE_WALKER
+
+    BUFFER_NAV --> NAV_NEXT
+    NAV_NEXT --> NODES
+    NODES --> IDX_HEAD
+
+    TREE_WALKER --> CACHED_WALK
+    CACHED_WALK --> MTA_THREAD
+    MTA_THREAD --> WORK_QUEUE
+    WORK_QUEUE --> CR_STD
+    CR_STD --> BATCH_IPC
+    BATCH_IPC --> STATIC_CACHE
+
+    %% ======================
+    %% Document Loading
+    %% ======================
+    LOAD_DOC --> MTA_THREAD
+    MTA_THREAD --> CR_FULL
+    CR_FULL --> NODES
+
+    %% ======================
+    %% Output Flow
+    %% ======================
+    BUFFER_NAV --> CONTEXT
+    CACHED_WALK --> CONTEXT
+    CONTEXT --> TTS

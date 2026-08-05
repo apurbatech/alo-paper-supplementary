@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant User
+    participant Hook as Keyboard Hook
+    participant UIM as UserInputManager
+    participant ETE as EventTokenEngine
+    participant Reader as WordProgramReader
+    participant Word as Word COM
+    participant TTS as TextToSpeech
+
+    User->>Hook: Press Ctrl+Right
+    Hook->>UIM: KeyPressed event
+    UIM->>ETE: GetToken(UserInput)
+    ETE-->>UIM: CancellationToken
+    UIM->>UIM: Task.Run(process key)
+    UIM->>Reader: Raise OnKeyPressed("Ctrl+Right")
+    Reader->>Reader: Find method with [OnKeyPressed("Ctrl+Right")]
+    Reader->>Reader: Invoke NextWord()
+    Reader->>Word: Selection.MoveRight(wdWord, 1)
+    Word-->>Reader: Success
+    Reader->>Word: Selection.Text
+    Word-->>Reader: "hello"
+    Reader->>TTS: Speak("hello")
+    TTS->>User: Audio: "hello"
